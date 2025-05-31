@@ -1,13 +1,374 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-TW">
 
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title></title>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>台灣天氣網站｜即時天氣與一週預報</title>
+    <link href="leaflet/leaflet.css" rel="stylesheet" />
+    <style>
+    body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+        transition: background-image 0.6s ease-in-out;
+        background-size: cover;
+        background-repeat: no-repeat;
+        background-attachment: fixed;
+        background-position: center center;
+        background-image: url('images/sunny.jpg');
+        /* 預設背景 */
+    }
+
+    header,
+    footer {
+        background-color: rgba(0, 122, 204, 0.85);
+        color: white;
+        padding: 1em;
+        text-align: center;
+    }
+
+    main {
+        flex: 1;
+        padding: 2em;
+    }
+
+    h2 {
+        text-align: center;
+    }
+
+    .section {
+        background: rgba(255, 255, 255, 0.9);
+        border-radius: 10px;
+        padding: 1.5em;
+        margin-bottom: 2em;
+        box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+        max-width: 800px;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    select,
+    button {
+        font-size: 1em;
+        padding: 0.5em;
+        display: block;
+        margin: 0.5em auto;
+    }
+
+    .temperature {
+        font-size: 2.5em;
+        font-weight: bold;
+        color: #e65100;
+        text-align: center;
+    }
+
+    #weatherDesc,
+    #currentTime {
+        text-align: center;
+        font-size: 1.1em;
+        margin: 0.5em 0;
+    }
+
+    #windSpeed {
+        text-align: center;
+        font-size: 1.1em;
+        margin: 0.5em 0;
+        font-weight: bold;
+    }
+
+    #advice {
+        font-size: 1.5em;
+        text-align: center;
+        font-weight: bold;
+        color: #004d40;
+        background-color: #e0f7fa;
+        padding: 1em;
+        border-radius: 10px;
+        margin-top: 1em;
+    }
+
+    #icon {
+        display: block;
+        margin: 1em auto;
+        width: 80px;
+        height: 80px;
+    }
+
+    ul.forecast {
+        list-style: none;
+        padding: 0;
+    }
+
+    ul.forecast li {
+        border-bottom: 1px solid #ddd;
+        padding: 0.5em 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    ul.forecast li:last-child {
+        border-bottom: none;
+    }
+
+    .forecast-date {
+        flex: 2;
+    }
+
+    .forecast-temp {
+        flex: 1;
+        text-align: right;
+    }
+
+    .forecast-icon {
+        width: 40px;
+        height: 40px;
+        margin-right: 10px;
+    }
+
+    #map {
+        height: 400px;
+        width: 100%;
+        margin-top: 1em;
+        border-radius: 10px;
+    }
+    </style>
 </head>
 
 <body>
+    <header>
+        <h1>🌦 台灣天氣查詢網站</h1>
+    </header>
+    <main>
+        <div class="section">
+            <h2>📍 選擇縣市</h2>
+            <button onclick="getLocation()">📍 使用我的位置</button>
+            <label for="citySelect"></label>
+            <select id="citySelect"></select>
+            <button onclick="toggleTempUnit()">切換 °C / °F</button>
+            <div class="temperature" id="nowTemp">-- °C</div>
+            <img alt="天氣圖示" id="icon" src="" />
+            <div id="weatherDesc">天氣狀況載入中...</div>
+            <div id="windSpeed">風速：-- m/s</div>
+            <p id="currentTime"></p>
+        </div>
+        <div class="section" id="advice">👕 穿搭建議載入中...</div>
+        <div class="section">
+            <h2>🌡 一周氣溫圖表與詳細預報</h2>
+            <iframe height="700" src="test3.html" style="border:1px solid #ccc; border-radius: 10px;" width="100%"></iframe>
+        </div>
+        <div class="section">
+            <h2>🗺 地圖顯示</h2>
+            <div id="map"></div>
+        </div>
+    </main>
+    <footer>
+        <p>資料來源：中央氣象署 | 製作：許淞曜</p>
+    </footer>
+    <script src="leaflet/leaflet.js"></script>
+    <script>
+    const auth = 'CWA-AB2F2EF6-5165-4418-9F42-17278A1DC6A9';
+    const forecastAPI = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-091?Authorization=${auth}&format=JSON`;
+    const realtimeAPI = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001?Authorization=${auth}&format=JSON`;
+
+    const citySelect = document.getElementById("citySelect");
+    const adviceBox = document.getElementById("advice");
+    const weatherIcon = document.getElementById("icon");
+    const windSpeedEl = document.getElementById("windSpeed");
+    const nowTemp = document.getElementById("nowTemp");
+    let forecastLocations = [];
+    let map, marker;
+    let isCelsius = true;
+    let currentTempC = null;
+
+    async function init() {
+        const forecastData = await fetch(forecastAPI).then(res => res.json());
+        forecastLocations = forecastData.records.Locations[0].Location;
+
+        forecastLocations.forEach((loc, index) => {
+            const option = document.createElement("option");
+            option.value = index;
+            option.textContent = loc.LocationName;
+            citySelect.appendChild(option);
+        });
+
+        citySelect.addEventListener("change", () => {
+            const index = citySelect.value;
+            updateWeather(index);
+        });
+
+        citySelect.value = forecastLocations.findIndex(loc => loc.LocationName === "臺北市");
+        updateWeather(citySelect.value);
+        initMap();
+        tryLocateUser();
+    }
+
+    function toggleTempUnit() {
+        isCelsius = !isCelsius;
+        if (currentTempC !== null) {
+            nowTemp.innerText = isCelsius ? `${currentTempC} °C` : `${Math.round((currentTempC * 9 / 5 + 32) * 10) / 10} °F`;
+        }
+    }
+
+    async function updateWeather(index) {
+        const city = forecastLocations[index].LocationName;
+        await getRealtime(city);
+        updateForecastList(forecastLocations[index]);
+    }
+
+    async function getRealtime(cityName) {
+        try {
+            const res = await fetch(realtimeAPI);
+            const data = await res.json();
+
+            let station;
+            if (cityName === "臺北市") {
+                station = data.records.Station.find(
+                    s => s.GeoInfo.CountyCode === "63000" && s.GeoInfo.TownCode === "63000050"
+                );
+            } else {
+                station = data.records.Station.find(s => s.GeoInfo.CountyName === cityName);
+            }
+
+            if (!station) return;
+
+            const temp = parseFloat(station.WeatherElement.AirTemperature);
+            currentTempC = temp;
+            nowTemp.innerText = isCelsius ? `${temp} °C` : `${Math.round((temp * 9 / 5 + 32) * 10) / 10} °F`;
+
+            const weather = station.WeatherElement.Weather;
+            const windSpeed = station.WeatherElement.WindSpeed || "無資料";
+            const lat = parseFloat(station.GeoInfo.Coordinates[1].StationLatitude);
+            const lon = parseFloat(station.GeoInfo.Coordinates[1].StationLongitude);
+
+            document.getElementById('weatherDesc').innerText = `天氣狀況：${weather !== "-99" ? weather : "資料暫缺"}`;
+            windSpeedEl.innerText = `風速：${windSpeed} m/s`;
+            document.getElementById('currentTime').innerText = `目前時間：${new Date().toLocaleString()}`;
+
+            showClothingAdvice(temp, weather);
+            setWeatherEmoji(weather);
+            updateMap(lat, lon, cityName);
+            updateBackground(weather);
+        } catch (error) {
+            console.error("取得即時天氣失敗", error);
+        }
+    }
+
+    function setWeatherEmoji(weatherText) {
+        const emojiMap = {
+            "晴": "☀️",
+            "多雲": "⛅",
+            "陰": "☁️",
+            "雨": "🌧️"
+        };
+        let emoji = "❓";
+        if (weatherText.includes("雨")) emoji = emojiMap["雨"];
+        else if (weatherText.includes("陰")) emoji = emojiMap["陰"];
+        else if (weatherText.includes("多雲")) emoji = emojiMap["多雲"];
+        else if (weatherText.includes("晴")) emoji = emojiMap["晴"];
+
+        weatherIcon.src = "";
+        weatherIcon.alt = weatherText;
+        weatherIcon.style.display = "none";
+
+        const oldEmoji = document.getElementById("emojiIcon");
+        if (oldEmoji) oldEmoji.remove();
+
+        weatherIcon.insertAdjacentHTML("afterend", `<div id="emojiIcon" style="font-size: 3em; text-align:center;">${emoji}</div>`);
+    }
+
+    function showClothingAdvice(temp, weather) {
+        let advice = "";
+        if (temp >= 30) advice = "🌞 輕薄短袖、短褲、涼鞋，注意防曬。";
+        else if (temp >= 26) advice = "🌤 短袖+薄長褲，室內冷氣強可帶薄外套。";
+        else if (temp >= 20) advice = "🍃 薄長袖、薄外套，早晚略涼。";
+        else if (temp >= 16) advice = "🧥 建議針織衫、外套。";
+        else if (temp >= 10) advice = "🧣 保暖衣物+圍巾，大衣適合。";
+        else advice = "❄️ 請穿羽絨衣、手套、圍巾。";
+        if (weather.includes("雨")) advice += " ☔ 建議攜帶雨具。";
+        adviceBox.innerText = "👕 穿搭建議：" + advice;
+    }
+
+    function updateForecastList(cityData) {
+        const getElement = name => cityData.WeatherElement.find(e => e.ElementName === name);
+        const timeArray = getElement("天氣現象").Time;
+        const maxArray = getElement("最高溫度").Time;
+        const minArray = getElement("最低溫度").Time;
+        const list = document.getElementById("forecastList");
+        list.innerHTML = "";
+
+        for (let i = 0; i < 7; i++) {
+            const date = timeArray[i].StartTime.slice(5, 10);
+            const desc = timeArray[i].ElementValue[0].Value;
+            const emoji = getEmojiFromDesc(desc);
+            const max = maxArray[i].ElementValue[0].Value;
+            const min = minArray[i].ElementValue[0].Value;
+
+            const li = document.createElement("li");
+            li.innerHTML = `
+                <span class="forecast-icon" style="font-size: 1.8em;">${emoji}</span>
+                <span class="forecast-date">${date} ${desc}</span>
+                <span class="forecast-temp">${min}°C ~ ${max}°C</span>`;
+            list.appendChild(li);
+        }
+    }
+
+    function getEmojiFromDesc(desc) {
+        if (desc.includes("雨")) return "🌧️";
+        if (desc.includes("雷")) return "⛈️";
+        if (desc.includes("陰")) return "☁️";
+        if (desc.includes("雲")) return "⛅";
+        if (desc.includes("晴")) return "☀️";
+        return "❓";
+    }
+
+    // ✅ 這是你要的根據天氣切換背景圖片功能
+    function updateBackground(weather) {
+        let bg = "sunny.jpg";
+        if (weather.includes("雨")) {
+            bg = "rainy.jpg";
+        } else if (weather.includes("陰")) {
+            bg = "cloudy.jpg";
+        } else if (weather.includes("雲") || weather.includes("晴")) {
+            bg = "sunny.jpg";
+        }
+        document.body.style.backgroundImage = `url('images/${bg}')`;
+    }
+
+    function getLocation() {
+        tryLocateUser();
+    }
+
+    function tryLocateUser() {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                position => updateMap(position.coords.latitude, position.coords.longitude, "你的位置"),
+                () => updateMap(25.0375, 121.5637, "中央氣象署")
+            );
+        } else {
+            updateMap(25.0375, 121.5637, "中央氣象署");
+        }
+    }
+
+    function initMap() {
+        map = L.map('map').setView([23.5, 121], 7);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap 貢獻者'
+        }).addTo(map);
+    }
+
+    function updateMap(lat, lon, name) {
+        map.setView([lat, lon], 11);
+        if (marker) marker.remove();
+        marker = L.marker([lat, lon]).addTo(map).bindPopup(`${name}`).openPopup();
+    }
+
+    init();
+    </script>
 </body>
 
 </html>
